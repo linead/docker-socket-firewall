@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -14,6 +13,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
 	"github.com/tv42/httpunix"
 )
@@ -114,6 +114,12 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+func verifyProxyCall(req *http.Request) {
+	p := opa.NewDockerOpaHandler("/tmp/auth.rego", "/tmp/dockerfile.rego")
+	p.ProxyRequest(req)
+
+}
+
 func verifyBuildInstruction(req *http.Request) {
 	//preserve original request if we want to still send it (Dockerfile is clean)
 	var buf bytes.Buffer
@@ -132,6 +138,8 @@ func verifyBuildInstruction(req *http.Request) {
 
 	tr := tar.NewReader(b1)
 
+	dockerfileLoc := req.URL.Query()["dockerfile"]
+
 	var valid = true
 
 	for {
@@ -142,11 +150,11 @@ func verifyBuildInstruction(req *http.Request) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Contents of %s:\n", hdr.Name)
-		if _, err := io.Copy(os.Stdout, tr); err != nil {
-			log.Fatal(err)
+		if hdr.Name == dockerfileLoc[0] {
+			p := opa.NewDockerOpaHandler("/tmp/auth.rego", "/tmp/dockerfile.rego")
+			df, _ := ioutil.ReadAll(tr)
+			p.ValidateDockerFile(req, string(df))
 		}
-		fmt.Println()
 	}
 
 	if valid {
@@ -164,9 +172,10 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 		panic(err)
 	} else if matched {
 		verifyBuildInstruction(req)
+	} else {
+		verifyProxyCall(req)
 	}
 
-	// targetSocket := "/var/run/docker.sock"
 	serveReverseProxy(res, req)
 }
 
