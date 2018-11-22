@@ -22,6 +22,19 @@ local: build-dirs
 	OUTPUT_DIR=$$(pwd)/_output/bin/$(GOOS)/$(GOARCH) \
 	./hack/build.sh
 
+build: _output/bin/$(GOOS)/$(GOARCH)/$(BIN)
+
+_output/bin/$(GOOS)/$(GOARCH)/$(BIN): build-dirs
+	@echo "building: $@"
+	$(MAKE) shell CMD="-c '\
+    GOOS=$(GOOS) \
+    GOARCH=$(GOARCH) \
+    VERSION=$(VERSION) \
+    PKG=$(PKG) \
+    BIN=$(BIN) \
+    OUTPUT_DIR=/output/$(GOOS)/$(GOARCH) \
+    ./hack/build.sh'"
+
 build-dirs:
 	@mkdir -p _output/bin/$(GOOS)/$(GOARCH)
 	@mkdir -p .go/src/$(PKG) .go/pkg .go/bin .go/std/$(GOOS)/$(GOARCH) .go/go-build

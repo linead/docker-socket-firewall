@@ -31,89 +31,52 @@ func NewDockerOpaHandler(pPolicy string, dPolicy string) dockerOpaHandler {
 }
 
 func (p dockerOpaHandler) ProxyRequest(r *http.Request) (bool, error) {
-	ctx := context.Background()
-
 	if _, err := os.Stat(p.proxyPolicyFile); os.IsNotExist(err) {
 		log.Printf("OPA proxy policy file %s does not exist, failing open and allowing request", p.proxyPolicyFile)
 		return true, err
 	}
 
-	bs, err := ioutil.ReadFile(p.proxyPolicyFile)
-	if err != nil {
-		return false, err
-	}
-
 	input, err := makeInput(r)
 	if err != nil {
 		return false, err
 	}
 
-	pretty, _ := json.MarshalIndent(input, "", "  ")
-	log.Printf("Querying OPA policy %v. Input: %s", authAllowPath, pretty)
-
-	allowed, err := func() (bool, error) {
-
-		eval := rego.New(
-			rego.Query(authAllowPath),
-			rego.Input(input),
-			rego.Module(p.proxyPolicyFile, string(bs)),
-		)
-
-		rs, err := eval.Eval(ctx)
-		if err != nil {
-			return false, err
-		}
-
-		if len(rs) == 0 {
-			// Decision is undefined. Fallback to deny.
-			return false, nil
-		}
-
-		allowed, ok := rs[0].Expressions[0].Value.(bool)
-		if !ok {
-			return false, fmt.Errorf("administrative policy decision invalid")
-		}
-
-		return allowed, nil
-
-	}()
-
-	if err != nil {
-		log.Printf("Returning OPA policy decision: %v (error: %v)", allowed, err)
-	} else {
-		log.Printf("Returning OPA policy decision: %v", allowed)
-	}
+	allowed, err := processPolicy(input, p.proxyPolicyFile, authAllowPath, r.Context())
 
 	return allowed, err
 }
 
 func (p dockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string) (bool, error) {
-	ctx := context.Background()
-
 	if _, err := os.Stat(p.dockerfilePolicyFile); os.IsNotExist(err) {
-		log.Printf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.proxyPolicyFile)
+		log.Printf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.dockerfilePolicyFile)
 		return true, err
 	}
 
-	bs, err := ioutil.ReadFile(p.dockerfilePolicyFile)
+	input, err := makeDockerfileInput(r, strings.Split(dockerFile, "\n"))
 	if err != nil {
 		return false, err
 	}
 
-	input, err := makeInput(r)
+	allowed, err := processPolicy(input, p.dockerfilePolicyFile, buildAllowPath, r.Context())
+
+	return allowed, err
+}
+
+func processPolicy(input interface{}, policyFile string, policyPath string, ctx context.Context) (bool, error) {
+
+	bs, err := ioutil.ReadFile(policyFile)
 	if err != nil {
 		return false, err
 	}
 
 	pretty, _ := json.MarshalIndent(input, "", "  ")
-	log.Printf("Querying OPA policy %v. Input: %s", authAllowPath, pretty)
-
+	log.Printf("Querying OPA policy %v. Input: %s", policyPath, pretty)
 	allowed, err := func() (bool, error) {
 
 		eval := rego.New(
-			rego.Query(authAllowPath),
+			rego.Query(policyPath),
 			rego.Input(input),
-			rego.Module(p.proxyPolicyFile, string(bs)),
+			rego.Module(policyFile, string(bs)),
 		)
 
 		rs, err := eval.Eval(ctx)
@@ -134,14 +97,13 @@ func (p dockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string)
 		return allowed, nil
 
 	}()
-
 	if err != nil {
 		log.Printf("Returning OPA policy decision: %v (error: %v)", allowed, err)
+		return allowed, err
 	} else {
 		log.Printf("Returning OPA policy decision: %v", allowed)
 	}
-
-	return allowed, err
+	return allowed, nil
 }
 
 func makeInput(r *http.Request) (interface{}, error) {
@@ -155,7 +117,7 @@ func makeInput(r *http.Request) (interface{}, error) {
 	}
 
 	input := map[string]interface{}{
-		"Headers": r.Header,
+		"Headers": flattenHeaders(r.Header),
 		"Path":    r.URL.Path + "?" + r.URL.RawQuery,
 		"Method":  r.Method,
 		"Body":    body,
@@ -163,6 +125,35 @@ func makeInput(r *http.Request) (interface{}, error) {
 
 	return input, nil
 }
+
+func makeDockerfileInput(r *http.Request, dockerfile []string) (interface{}, error) {
+
+	var body interface{}
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && r.ContentLength > 0 {
+		if err := json.NewDecoder(peekBody(r)).Decode(&body); err != nil {
+			return nil, err
+		}
+	}
+
+	input := map[string]interface{}{
+		"Headers": 		flattenHeaders(r.Header),
+		"Path":    		r.URL.Path + "?" + r.URL.RawQuery,
+		"Method":  		r.Method,
+		"Dockerfile": 	dockerfile,
+	}
+
+	return input, nil
+}
+
+func flattenHeaders(src http.Header) map[string]string {
+	var headers = make(map[string]string)
+	for k, vv := range src {
+		headers[k] = strings.Join(vv, ", ")
+	}
+	return headers
+}
+
 
 func peekBody(req *http.Request) io.Reader {
 	var buf bytes.Buffer

@@ -18,6 +18,8 @@ import (
 	"github.com/tv42/httpunix"
 )
 
+var opaHandler = opa.NewDockerOpaHandler("/etc/docker/auth.rego", "/etc/docker/dockerfile.rego")
+
 /*
 	Utilities
 */
@@ -36,7 +38,7 @@ func getEnv(key, fallback string) string {
 
 // Get the port to listen on
 func getListenAddress() string {
-	socketAddr := getEnv("SOCKET_ADDR", "/tmp/docker")
+	socketAddr := getEnv("SOCKET_ADDR", "/var/run/docker.sock")
 	return socketAddr
 }
 
@@ -59,7 +61,7 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 		RequestTimeout:        10 * time.Second,
 		ResponseHeaderTimeout: 0 * time.Second,
 	}
-	u.RegisterLocation("docker-socket", "/var/run/docker.sock")
+	u.RegisterLocation("docker-socket", "/var/run/docker-protected.sock")
 
 	req.URL.Scheme = "http+unix"
 	req.URL.Host = "docker-socket"
@@ -67,7 +69,7 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 	resp, err := u.RoundTrip(req)
 
 	if err != nil {
-		//http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -114,24 +116,18 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func verifyProxyCall(req *http.Request) {
-	p := opa.NewDockerOpaHandler("/tmp/auth.rego", "/tmp/dockerfile.rego")
-	p.ProxyRequest(req)
-
-}
-
-func verifyBuildInstruction(req *http.Request) {
+func verifyBuildInstruction(req *http.Request) (bool, error) {
 	//preserve original request if we want to still send it (Dockerfile is clean)
 	var buf bytes.Buffer
 	b := req.Body
 	var err error
 
 	if _, err = buf.ReadFrom(b); err != nil {
-		//TODO: Error handling
+		return false, err
 	}
 
 	if err = b.Close(); err != nil {
-		//TODO: Error handling
+		return false, err
 	}
 
 	b1, b2 := ioutil.NopCloser(&buf), ioutil.NopCloser(bytes.NewReader(buf.Bytes()))
@@ -140,7 +136,7 @@ func verifyBuildInstruction(req *http.Request) {
 
 	dockerfileLoc := req.URL.Query()["dockerfile"]
 
-	var valid = true
+	var valid = false
 
 	for {
 		hdr, err := tr.Next()
@@ -151,15 +147,16 @@ func verifyBuildInstruction(req *http.Request) {
 			log.Fatal(err)
 		}
 		if hdr.Name == dockerfileLoc[0] {
-			p := opa.NewDockerOpaHandler("/tmp/auth.rego", "/tmp/dockerfile.rego")
 			df, _ := ioutil.ReadAll(tr)
-			p.ValidateDockerFile(req, string(df))
+			valid, err = opaHandler.ValidateDockerFile(req, string(df))
 		}
 	}
 
 	if valid {
 		req.Body = b2
 	}
+
+	return valid, nil
 
 }
 
@@ -168,24 +165,33 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	// detect build requests
 	matched, err := regexp.MatchString("/v\\d\\.\\d+/build", req.URL.Path)
 
+
+	allowed := false
 	if err != nil {
 		panic(err)
 	} else if matched {
-		verifyBuildInstruction(req)
+		allowed, err = verifyBuildInstruction(req)
 	} else {
-		verifyProxyCall(req)
+		allowed, err = opaHandler.ProxyRequest(req)
 	}
 
-	serveReverseProxy(res, req)
+	if (allowed) {
+		serveReverseProxy(res, req)
+	} else {
+		http.Error(res, "Authorization denied", http.StatusForbidden)
+	}
 }
 
 // ListenAndServe Listen for all requests on the given socket
 func ListenAndServe(sockPath string) error {
 	http.HandleFunc("/", handleRequestAndRedirect)
-	l, err := net.Listen("unix", "/tmp/docker")
+	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to listen")
 	}
+
+	os.Chmod(sockPath, 0777);
+
 	return http.Serve(l, nil)
 }
 
@@ -198,7 +204,8 @@ func main() {
 	logSetup()
 
 	// clean up old sockets
-	os.Remove("/tmp/docker")
+	os.Remove(getListenAddress())
+
 
 	// start server
 	if err := ListenAndServe(getListenAddress()); err != nil {
