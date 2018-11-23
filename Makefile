@@ -1,3 +1,4 @@
+.DEFAULT_GOAL := ci
 BIN ?= docker-socket-firewall
 PKG := github.com/linead/docker-socket-firewall
 
@@ -22,19 +23,32 @@ local: build-dirs
 	OUTPUT_DIR=$$(pwd)/_output/bin/$(GOOS)/$(GOARCH) \
 	./hack/build.sh
 
-build: _output/bin/$(GOOS)/$(GOARCH)/$(BIN)
+mac:
+	GOOS=darwin \
+	GOARCH=amd64 \
+	VERSION=$(VERSION) \
+	PKG=$(PKG) \
+	BIN=$(BIN) \
+	OUTPUT_DIR=$$(pwd)/_output/bin/linux/amd64 \
+	./hack/build.sh
 
-_output/bin/$(GOOS)/$(GOARCH)/$(BIN): build-dirs
-	@echo "building: $@"
-	$(MAKE) shell CMD="-c '\
-    GOOS=$(GOOS) \
-    GOARCH=$(GOARCH) \
-    VERSION=$(VERSION) \
-    PKG=$(PKG) \
-    BIN=$(BIN) \
-    OUTPUT_DIR=/output/$(GOOS)/$(GOARCH) \
-    ./hack/build.sh'"
+linux:
+	GOOS=linux \
+	GOARCH=amd64 \
+	VERSION=$(VERSION) \
+	PKG=$(PKG) \
+	BIN=$(BIN) \
+	OUTPUT_DIR=$$(pwd)/_output/bin/linux/amd64 \
+	./hack/build.sh
+
+ci: build-ci-dirs mac linux
+
+build-ci-dirs:
+	@mkdir -p _output/bin/linux/amd64 _output/bin/darwin/amd64
+	@mkdir -p .go/src/$(PKG) .go/pkg .go/bin .go/std/linux/amd64 .go/std/darwin/amd64 .go/go-build
 
 build-dirs:
 	@mkdir -p _output/bin/$(GOOS)/$(GOARCH)
 	@mkdir -p .go/src/$(PKG) .go/pkg .go/bin .go/std/$(GOOS)/$(GOARCH) .go/go-build
+
+
