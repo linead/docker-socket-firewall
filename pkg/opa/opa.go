@@ -26,13 +26,13 @@ type DockerOpaHandler struct {
 const authAllowPath string = "data.docker.authz.allow"
 const buildAllowPath string = "data.docker.build.allow"
 
-//
-func NewDockerOpaHandler(pPolicy string, dPolicy string) *DockerOpaHandler {
-	return &DockerOpaHandler{
-		proxyPolicyFile:      pPolicy,
-		dockerfilePolicyFile: dPolicy,
-	}
-}
+//// NewDockerOpaHandler constructs the
+//func NewDockerOpaHandler(pPolicy string, dPolicy string) *DockerOpaHandler {
+//	return &DockerOpaHandler{
+//		proxyPolicyFile:      pPolicy,
+//		dockerfilePolicyFile: dPolicy,
+//	}
+//}
 
 // ValidateRequest validates a standard docker request (not build)
 // verifies against the proxyPolicyFile using the path data.docker.authz.allow
