@@ -136,7 +136,7 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 		}
 		if hdr.Name == dockerfileLoc[0] {
 			df, _ := ioutil.ReadAll(tr)
-			valid, err = opaHandler.ValidateDockerFile(req, string(df))
+			valid, _ = opaHandler.ValidateDockerFile(req, string(df))
 		}
 	}
 
@@ -151,15 +151,18 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 // Given a request send it to the appropriate url
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	// detect build requests
-	matched, err := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
-
+	matched, _ := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
 	allowed := false
-	if err != nil {
-		panic(err)
-	} else if matched {
+	var err error
+	if matched {
 		allowed, err = verifyBuildInstruction(req)
 	} else {
 		allowed, err = opaHandler.ValidateRequest(req)
+	}
+
+	if err != nil {
+		http.Error(res, "Authorization failure", http.StatusInternalServerError)
+		return
 	}
 
 	if allowed {
