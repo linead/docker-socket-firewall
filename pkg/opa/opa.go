@@ -137,10 +137,10 @@ func makeDockerfileInput(r *http.Request, dockerfile []string) (interface{}, err
 	}
 
 	input := map[string]interface{}{
-		"Headers": 		flattenHeaders(r.Header),
-		"Path":    		r.URL.Path + "?" + r.URL.RawQuery,
-		"Method":  		r.Method,
-		"Dockerfile": 	dockerfile,
+		"Headers":    flattenHeaders(r.Header),
+		"Path":       r.URL.Path + "?" + r.URL.RawQuery,
+		"Method":     r.Method,
+		"Dockerfile": dockerfile,
 	}
 
 	return input, nil
@@ -153,7 +153,6 @@ func flattenHeaders(src http.Header) map[string]string {
 	}
 	return headers
 }
-
 
 func peekBody(req *http.Request) io.Reader {
 	var buf bytes.Buffer

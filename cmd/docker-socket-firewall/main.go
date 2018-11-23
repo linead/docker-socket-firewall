@@ -15,9 +15,8 @@ import (
 
 	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
-	"github.com/tv42/httpunix"
 	log "github.com/sirupsen/logrus"
-
+	"github.com/tv42/httpunix"
 )
 
 var opaHandler *opa.DockerOpaHandler = nil
@@ -163,7 +162,7 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 		allowed, err = opaHandler.ProxyRequest(req)
 	}
 
-	if (allowed) {
+	if allowed {
 		serveReverseProxy(res, req)
 	} else {
 		http.Error(res, "Authorization denied", http.StatusForbidden)
@@ -178,7 +177,7 @@ func ListenAndServe(sockPath string) error {
 		return errors.Wrap(err, "failed to listen")
 	}
 
-	os.Chmod(sockPath, 0777);
+	os.Chmod(sockPath, 0777)
 
 	return http.Serve(l, nil)
 }
@@ -197,12 +196,12 @@ func main() {
 
 	flag.Parse()
 
-	if(*printUsage) {
+	if *printUsage {
 		flag.Usage()
 		os.Exit(0)
 	}
 
-	if(*verbose) {
+	if *verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
