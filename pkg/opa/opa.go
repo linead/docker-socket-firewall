@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/open-policy-agent/opa/rego"
+	log "github.com/sirupsen/logrus"
 )
 
-type dockerOpaHandler struct {
+type DockerOpaHandler struct {
 	proxyPolicyFile      string
 	dockerfilePolicyFile string
 }
@@ -23,16 +23,16 @@ type dockerOpaHandler struct {
 const authAllowPath string = "data.docker.authz.allow"
 const buildAllowPath string = "data.docker.build.allow"
 
-func NewDockerOpaHandler(pPolicy string, dPolicy string) dockerOpaHandler {
-	return dockerOpaHandler{
+func NewDockerOpaHandler(pPolicy string, dPolicy string) *DockerOpaHandler {
+	return &DockerOpaHandler{
 		proxyPolicyFile:      pPolicy,
 		dockerfilePolicyFile: dPolicy,
 	}
 }
 
-func (p dockerOpaHandler) ProxyRequest(r *http.Request) (bool, error) {
+func (p DockerOpaHandler) ProxyRequest(r *http.Request) (bool, error) {
 	if _, err := os.Stat(p.proxyPolicyFile); os.IsNotExist(err) {
-		log.Printf("OPA proxy policy file %s does not exist, failing open and allowing request", p.proxyPolicyFile)
+		log.Warnf("OPA proxy policy file %s does not exist, failing open and allowing request", p.proxyPolicyFile)
 		return true, err
 	}
 
@@ -46,9 +46,9 @@ func (p dockerOpaHandler) ProxyRequest(r *http.Request) (bool, error) {
 	return allowed, err
 }
 
-func (p dockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string) (bool, error) {
+func (p DockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string) (bool, error) {
 	if _, err := os.Stat(p.dockerfilePolicyFile); os.IsNotExist(err) {
-		log.Printf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.dockerfilePolicyFile)
+		log.Warnf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.dockerfilePolicyFile)
 		return true, err
 	}
 
@@ -70,7 +70,7 @@ func processPolicy(input interface{}, policyFile string, policyPath string, ctx 
 	}
 
 	pretty, _ := json.MarshalIndent(input, "", "  ")
-	log.Printf("Querying OPA policy %v. Input: %s", policyPath, pretty)
+	log.Debugf("Querying OPA policy %v. Input: %s", policyPath, pretty)
 	allowed, err := func() (bool, error) {
 
 		eval := rego.New(
@@ -98,10 +98,10 @@ func processPolicy(input interface{}, policyFile string, policyPath string, ctx 
 
 	}()
 	if err != nil {
-		log.Printf("Returning OPA policy decision: %v (error: %v)", allowed, err)
+		log.Debugf("Returning OPA policy decision: %v (error: %v)", allowed, err)
 		return allowed, err
 	} else {
-		log.Printf("Returning OPA policy decision: %v", allowed)
+		log.Debugf("Returning OPA policy decision: %v", allowed)
 	}
 	return allowed, nil
 }

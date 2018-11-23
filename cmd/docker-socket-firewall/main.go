@@ -4,9 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"flag"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -16,9 +16,12 @@ import (
 	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
 	"github.com/tv42/httpunix"
+	log "github.com/sirupsen/logrus"
+
 )
 
-var opaHandler = opa.NewDockerOpaHandler("/etc/docker/auth.rego", "/etc/docker/dockerfile.rego")
+var opaHandler *opa.DockerOpaHandler = nil
+var targetSocket string = ""
 
 /*
 	Utilities
@@ -36,20 +39,6 @@ func getEnv(key, fallback string) string {
 	Getters
 */
 
-// Get the port to listen on
-func getListenAddress() string {
-	socketAddr := getEnv("SOCKET_ADDR", "/var/run/docker.sock")
-	return socketAddr
-}
-
-/*
-	Logging
-*/
-
-func logSetup() {
-	log.Printf("Server will run on socket: %s\n", getListenAddress())
-}
-
 /*
 	Reverse Proxy Logic
 */
@@ -61,7 +50,7 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 		RequestTimeout:        10 * time.Second,
 		ResponseHeaderTimeout: 0 * time.Second,
 	}
-	u.RegisterLocation("docker-socket", "/var/run/docker-protected.sock")
+	u.RegisterLocation("docker-socket", targetSocket)
 
 	req.URL.Scheme = "http+unix"
 	req.URL.Host = "docker-socket"
@@ -85,7 +74,7 @@ func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	for {
 		nr, rerr := src.Read(buf)
 		if rerr != nil && rerr != io.EOF && rerr != context.Canceled {
-			log.Printf("read error during body copy: %v", rerr)
+			log.Warnf("read error during body copy: %v", rerr)
 		}
 		if nr > 0 {
 			nw, werr := dst.Write(buf[:nr])
@@ -163,8 +152,7 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 // Given a request send it to the appropriate url
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	// detect build requests
-	matched, err := regexp.MatchString("/v\\d\\.\\d+/build", req.URL.Path)
-
+	matched, err := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
 
 	allowed := false
 	if err != nil {
@@ -200,15 +188,33 @@ func ListenAndServe(sockPath string) error {
 */
 
 func main() {
-	// Log setup values
-	logSetup()
+
+	targetSocket = *flag.String("target", "/var/run/docker.sock", "The docker socket to connect to")
+	hostSocket := flag.String("host", "/var/run/protected-docker.sock", "The docker socket to listen on")
+	policyDir := flag.String("policyDir", "/etc/docker", "The directory containing the OPA policies")
+	printUsage := flag.Bool("usage", false, "Print usage information")
+	verbose := flag.Bool("verbose", false, "Print debug logging")
+
+	flag.Parse()
+
+	if(*printUsage) {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	if(*verbose) {
+		log.SetLevel(log.DebugLevel)
+	}
 
 	// clean up old sockets
-	os.Remove(getListenAddress())
+	os.Remove(*hostSocket)
 
+	opaHandler = opa.NewDockerOpaHandler(*policyDir+"/auth.rego", *policyDir+"/etc/docker/dockerfile.rego")
+
+	log.Infof("Firewalled: %s->%s, Policy Dir: %s", targetSocket, *hostSocket, *policyDir)
 
 	// start server
-	if err := ListenAndServe(getListenAddress()); err != nil {
-		panic(err)
+	if err := ListenAndServe(*hostSocket); err != nil {
+		log.Fatal("Unable to start firewalled socket")
 	}
 }
