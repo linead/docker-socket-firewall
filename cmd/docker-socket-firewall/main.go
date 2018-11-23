@@ -150,10 +150,11 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 // Given a request send it to the appropriate url
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
-	// detect build requests
 	matched, _ := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
-	allowed := false
+
 	var err error
+	var allowed bool
+
 	if matched {
 		allowed, err = verifyBuildInstruction(req)
 	} else {
