@@ -19,8 +19,8 @@ import (
 	"github.com/tv42/httpunix"
 )
 
-var opaHandler *opa.DockerOpaHandler = nil
-var targetSocket string = ""
+var opaHandler *opa.DockerOpaHandler
+var targetSocket string
 
 /*
 	Utilities
@@ -159,7 +159,7 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	} else if matched {
 		allowed, err = verifyBuildInstruction(req)
 	} else {
-		allowed, err = opaHandler.ProxyRequest(req)
+		allowed, err = opaHandler.ValidateRequest(req)
 	}
 
 	if allowed {
@@ -169,7 +169,6 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// ListenAndServe Listen for all requests on the given socket
 func ListenAndServe(sockPath string) error {
 	http.HandleFunc("/", handleRequestAndRedirect)
 	l, err := net.Listen("unix", sockPath)
