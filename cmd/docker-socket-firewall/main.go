@@ -211,9 +211,9 @@ func main() {
 	// clean up old sockets
 	os.Remove(*hostSocket)
 
-	opaHandler = new(opa.DockerOpaHandler{
+	opaHandler = &opa.DockerOpaHandler{
 		*policyDir + "/authz.rego",
-		*policyDir + "/build.rego"})
+		*policyDir + "/build.rego"}
 
 	log.Infof("Firewalled: %s->%s, Policy Dir: %s", targetSocket, *hostSocket, *policyDir)
 

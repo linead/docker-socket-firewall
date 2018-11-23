@@ -19,8 +19,8 @@ import (
 
 // DockerOpaHandler contains the policy files for authorizing requests
 type DockerOpaHandler struct {
-	proxyPolicyFile      string
-	dockerfilePolicyFile string
+	ProxyPolicyFile      string
+	DockerfilePolicyFile string
 }
 
 const authAllowPath string = "data.docker.authz.allow"
@@ -29,16 +29,16 @@ const buildAllowPath string = "data.docker.build.allow"
 //// NewDockerOpaHandler constructs the
 //func NewDockerOpaHandler(pPolicy string, dPolicy string) *DockerOpaHandler {
 //	return &DockerOpaHandler{
-//		proxyPolicyFile:      pPolicy,
-//		dockerfilePolicyFile: dPolicy,
+//		ProxyPolicyFile:      pPolicy,
+//		DockerfilePolicyFile: dPolicy,
 //	}
 //}
 
 // ValidateRequest validates a standard docker request (not build)
-// verifies against the proxyPolicyFile using the path data.docker.authz.allow
+// verifies against the ProxyPolicyFile using the path data.docker.authz.allow
 func (p DockerOpaHandler) ValidateRequest(r *http.Request) (bool, error) {
-	if _, err := os.Stat(p.proxyPolicyFile); os.IsNotExist(err) {
-		log.Warnf("OPA proxy policy file %s does not exist, failing open and allowing request", p.proxyPolicyFile)
+	if _, err := os.Stat(p.ProxyPolicyFile); os.IsNotExist(err) {
+		log.Warnf("OPA proxy policy file %s does not exist, failing open and allowing request", p.ProxyPolicyFile)
 		return true, err
 	}
 
@@ -47,16 +47,16 @@ func (p DockerOpaHandler) ValidateRequest(r *http.Request) (bool, error) {
 		return false, err
 	}
 
-	allowed, err := processPolicy(r.Context(), p.proxyPolicyFile, authAllowPath, input)
+	allowed, err := processPolicy(r.Context(), p.ProxyPolicyFile, authAllowPath, input)
 
 	return allowed, err
 }
 
 // ValidateDockerFile validate the dockerfile passed through the given request
-// verifies against the dockerfilePolicyFile using the path data.docker.build.allow
+// verifies against the DockerfilePolicyFile using the path data.docker.build.allow
 func (p DockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string) (bool, error) {
-	if _, err := os.Stat(p.dockerfilePolicyFile); os.IsNotExist(err) {
-		log.Warnf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.dockerfilePolicyFile)
+	if _, err := os.Stat(p.DockerfilePolicyFile); os.IsNotExist(err) {
+		log.Warnf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.DockerfilePolicyFile)
 		return true, err
 	}
 
@@ -65,7 +65,7 @@ func (p DockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string)
 		return false, err
 	}
 
-	allowed, err := processPolicy(r.Context(), p.dockerfilePolicyFile, buildAllowPath, input)
+	allowed, err := processPolicy(r.Context(), p.DockerfilePolicyFile, buildAllowPath, input)
 
 	return allowed, err
 }
