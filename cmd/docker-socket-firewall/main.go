@@ -169,7 +169,7 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func ListenAndServe(sockPath string) error {
+func listenAndServe(sockPath string) error {
 	http.HandleFunc("/", handleRequestAndRedirect)
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -214,7 +214,7 @@ func main() {
 	log.Infof("Firewalled: %s->%s, Policy Dir: %s", targetSocket, *hostSocket, *policyDir)
 
 	// start server
-	if err := ListenAndServe(*hostSocket); err != nil {
+	if err := listenAndServe(*hostSocket); err != nil {
 		log.Fatal("Unable to start firewalled socket")
 	}
 }
