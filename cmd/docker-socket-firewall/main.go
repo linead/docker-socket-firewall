@@ -23,22 +23,6 @@ var opaHandler *opa.DockerOpaHandler
 var targetSocket string
 
 /*
-	Utilities
-*/
-
-// Get env var or default
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
-
-/*
-	Getters
-*/
-
-/*
 	Reverse Proxy Logic
 */
 
@@ -148,7 +132,7 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 }
 
-// Given a request send it to the appropriate url
+// Given a request send it to the appropriate url if it validates
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	matched, _ := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
 
@@ -192,8 +176,8 @@ func listenAndServe(sockPath string) error {
 func main() {
 
 	targetSocket = *flag.String("target", "/var/run/docker.sock", "The docker socket to connect to")
-	hostSocket := flag.String("host", "/var/run/protected-docker.sock", "The docker socket to listen on")
-	policyDir := flag.String("policyDir", "/etc/docker", "The directory containing the OPA policies")
+	hostSocket := *flag.String("host", "/var/run/protected-docker.sock", "The docker socket to listen on")
+	policyDir := *flag.String("policyDir", "/etc/docker", "The directory containing the OPA policies")
 	printUsage := flag.Bool("usage", false, "Print usage information")
 	verbose := flag.Bool("verbose", false, "Print debug logging")
 
@@ -209,16 +193,16 @@ func main() {
 	}
 
 	// clean up old sockets
-	os.Remove(*hostSocket)
+	os.Remove(hostSocket)
 
 	opaHandler = &opa.DockerOpaHandler{
-		*policyDir + "/authz.rego",
-		*policyDir + "/build.rego"}
+		policyDir + "/authz.rego",
+		policyDir + "/build.rego"}
 
-	log.Infof("Firewalled: %s->%s, Policy Dir: %s", targetSocket, *hostSocket, *policyDir)
+	log.Infof("Docker Firewall: %s -> %s, Policy Dir: %s", targetSocket, hostSocket, policyDir)
 
 	// start server
-	if err := listenAndServe(*hostSocket); err != nil {
+	if err := listenAndServe(hostSocket); err != nil {
 		log.Fatal("Unable to start firewalled socket")
 	}
 }
