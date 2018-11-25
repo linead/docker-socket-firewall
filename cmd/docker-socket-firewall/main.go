@@ -19,7 +19,7 @@ import (
 	"github.com/tv42/httpunix"
 )
 
-var opaHandler *opa.DockerOpaHandler
+var opaHandler opa.DockerHandler
 var targetSocket string
 
 /*
@@ -134,6 +134,7 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 // Given a request send it to the appropriate url if it validates
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
+	log.Debugf("Received Request: %s", req.URL.Path)
 	matched, _ := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
 
 	var err error
@@ -175,9 +176,12 @@ func listenAndServe(sockPath string) error {
 
 func main() {
 
-	targetSocket = *flag.String("target", "/var/run/docker.sock", "The docker socket to connect to")
-	hostSocket := *flag.String("host", "/var/run/protected-docker.sock", "The docker socket to listen on")
-	policyDir := *flag.String("policyDir", "/etc/docker", "The directory containing the OPA policies")
+	var hostSocket string
+	var policyDir string
+
+	flag.StringVar(&targetSocket, "target", "/var/run/docker.sock", "The docker socket to connect to")
+	flag.StringVar(&hostSocket, "host", "/var/run/protected-docker.sock", "The docker socket to listen on")
+	flag.StringVar(&policyDir, "policyDir", "/etc/docker", "The directory containing the OPA policies")
 	printUsage := flag.Bool("usage", false, "Print usage information")
 	verbose := flag.Bool("verbose", false, "Print debug logging")
 

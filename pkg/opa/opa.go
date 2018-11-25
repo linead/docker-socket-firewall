@@ -17,6 +17,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type DockerHandler interface {
+	ValidateRequest(r *http.Request) (bool, error)
+	ValidateDockerFile(r *http.Request, dockerFile string) (bool, error)
+}
+
 // DockerOpaHandler contains the policy files for authorizing requests
 type DockerOpaHandler struct {
 	ProxyPolicyFile      string
@@ -38,7 +43,7 @@ const buildAllowPath string = "data.docker.build.allow"
 // verifies against the ProxyPolicyFile using the path data.docker.authz.allow
 func (p DockerOpaHandler) ValidateRequest(r *http.Request) (bool, error) {
 	if _, err := os.Stat(p.ProxyPolicyFile); os.IsNotExist(err) {
-		log.Warnf("OPA proxy policy file %s does not exist, failing open and allowing request", p.ProxyPolicyFile)
+		log.Warnf("OPA auth policy file %s does not exist", p.ProxyPolicyFile)
 		return true, err
 	}
 
@@ -56,7 +61,7 @@ func (p DockerOpaHandler) ValidateRequest(r *http.Request) (bool, error) {
 // verifies against the DockerfilePolicyFile using the path data.docker.build.allow
 func (p DockerOpaHandler) ValidateDockerFile(r *http.Request, dockerFile string) (bool, error) {
 	if _, err := os.Stat(p.DockerfilePolicyFile); os.IsNotExist(err) {
-		log.Warnf("OPA dockerfile policy file %s does not exist, failing open and allowing request", p.DockerfilePolicyFile)
+		log.Warnf("OPA build policy file %s does not exist", p.DockerfilePolicyFile)
 		return true, err
 	}
 
