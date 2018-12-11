@@ -41,10 +41,12 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 	req.RequestURI = ""
 
 	if ( req.Header.Get("Connection") == "Upgrade") {
-		// this connection is to be upgraded
+		if ( req.Header.Get("Upgrade") != "tcp") {
+			http.Error(w, "Unsupported upgrade protocol: " + req.Header.Get("Protocol"), http.StatusInternalServerError)
+		}
+		log.Debug("Connection upgrading")
 		hijack(req, w)
 	} else {
-
 		resp, err := ctxhttp.Do(req.Context(), client, req)
 
 		if err != nil {
@@ -52,12 +54,13 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		log.Warnf("Resp %v", resp)
-
 		defer resp.Body.Close()
 
 		copyHeader(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
+
+		flushResponse(w)
+
 		copyBuffer(w, resp.Body)
 	}
 }
@@ -92,6 +95,8 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
+	flushResponse(w)
+
 	c, br := clientconn.Hijack()
 
 	hj, ok := w.(http.Hijacker)
@@ -117,26 +122,10 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 
 	streamFn := func(dst, src net.Conn, errc chan error) {
 		log.Debugf("Streaming connections")
-		for {
-			var bs = make([]byte, 10)
-			n, err := src.Read(bs)
-			if err != nil {
-				log.Fatalln("read messed up", err.Error())
-				errc <- err
-				break
-			}
-
-			m, err := dst.Write(bs)
-			if err != nil {
-				log.Fatalln("write messed up", err.Error())
-				errc <- err
-				break
-			}
-
-			log.Debugf("Read %v, Wrote %v", n, m)
-		}
-
-
+		written, err := copyBuffer(dst, src)
+		log.Debugf("wrote %v, err: %v", written, err)
+		errc<-err
+		src.Close()
 	}
 
 	go streamFn(outConn, c, errClient)
@@ -151,9 +140,6 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 	}
 
 	log.Error(message)
-
-	defer outConn.Close()
-	defer clientconn.Close()
 }
 
 func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
@@ -273,6 +259,13 @@ func listenAndServe(sockPath string) error {
 	os.Chmod(sockPath, 0777)
 
 	return http.Serve(l, nil)
+}
+
+func flushResponse(w http.ResponseWriter) {
+	flusher, ok := w.(http.Flusher)
+	if ok {
+		flusher.Flush()
+	}
 }
 
 /*
