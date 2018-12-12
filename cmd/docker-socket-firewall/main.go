@@ -39,6 +39,7 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 	req.URL.Scheme = "http"
 	req.URL.Host = targetSocket
 	req.RequestURI = ""
+	req.Close = true
 
 	if ( req.Header.Get("Connection") == "Upgrade") {
 		if ( req.Header.Get("Upgrade") != "tcp") {
@@ -120,35 +121,45 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 	errClient := make(chan error, 1)
 	errBackend := make(chan error, 1)
 
-	streamFn := func(dst, src net.Conn, errc chan error) {
-		log.Debugf("Streaming connections")
+	streamFn := func(dst, src net.Conn, errc chan error, desc string) {
+		log.Debugf("%s Streaming connections", desc)
 		written, err := copyBuffer(dst, src)
-		log.Debugf("wrote %v, err: %v", written, err)
+		log.Debugf("%s wrote %v, err: %v", desc, written, err)
 		errc<-err
-		src.Close()
 	}
 
-	go streamFn(outConn, c, errClient)
-	go streamFn(c, outConn, errBackend)
+	go streamFn(outConn, c, errClient, "docker -> client")
+	go streamFn(c, outConn, errBackend, "client -> docker")
 
-	var message string
 	select {
 	case err = <-errClient:
-		message = "hijack: Error when copying from backend to client: %v"
+		if err != nil {
+			log.Error("hijack: Error when copying from docker to client")
+		} else {
+			log.Debugf("Closed connection by docker")
+		}
 	case err = <-errBackend:
-		message = "hijack: Error when copying from client to backend: %v"
+		if err != nil {
+			log.Debugf("hijack: Error when copying from docker to client", err)
+		} else {
+			log.Debug("Closed connection by docker")
+		}
 	}
 
-	log.Error(message)
+	c.Close()
+	outConn.Close()
+	clientconn.Close()
+	inConn.Close()
 }
 
 func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	var buf = make([]byte, 32*1024)
 	var written int64
 	for {
+
 		nr, rerr := src.Read(buf)
 		if rerr != nil && rerr != io.EOF && rerr != context.Canceled {
-			log.Warnf("read error during body copy: %v", rerr)
+			log.Debugf("read error during body copy: %v", rerr)
 		}
 		if nr > 0 {
 			nw, werr := dst.Write(buf[:nr])
