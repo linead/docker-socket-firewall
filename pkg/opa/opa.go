@@ -32,7 +32,6 @@ type DockerOpaHandler struct {
 const authAllowPath string = "data.docker.authz.allow"
 const buildAllowPath string = "data.docker.build.allow"
 
-
 // ValidateRequest validates a standard docker request (not build)
 // verifies against the ProxyPolicyFile using the path data.docker.authz.allow
 func (p DockerOpaHandler) ValidateRequest(r *http.Request) (bool, error) {
