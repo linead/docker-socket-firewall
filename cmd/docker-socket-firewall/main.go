@@ -5,18 +5,19 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"github.com/docker/go-connections/sockets"
+	"golang.org/x/net/context/ctxhttp"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"regexp"
 	"time"
-
 	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"github.com/tv42/httpunix"
 )
 
 var opaHandler opa.DockerHandler
@@ -28,36 +29,138 @@ var targetSocket string
 
 // Serve a reverse proxy for a given url
 func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
-	u := &httpunix.Transport{
-		DialTimeout:           100 * time.Millisecond,
-		RequestTimeout:        10 * time.Second,
-		ResponseHeaderTimeout: 0 * time.Second,
+	transport := new(http.Transport)
+	sockets.ConfigureTransport(transport, "unix", targetSocket)
+	client := &http.Client{
+		Transport: transport,
 	}
-	u.RegisterLocation("docker-socket", targetSocket)
 
-	req.URL.Scheme = "http+unix"
-	req.URL.Host = "docker-socket"
+	req.Proto = "http"
+	req.URL.Scheme = "http"
+	req.URL.Host = targetSocket
+	req.RequestURI = ""
+	req.Close = true
 
-	resp, err := u.RoundTrip(req)
+	if ( req.Header.Get("Connection") == "Upgrade") {
+		if ( req.Header.Get("Upgrade") != "tcp" && req.Header.Get("Upgrade") != "h2c" ) {
+			http.Error(w, "Unsupported upgrade protocol: " + req.Header.Get("Protocol"), http.StatusInternalServerError)
+			return
+		}
+		log.Debug("Connection upgrading")
+		hijack(req, w)
+	} else {
+		resp, err := ctxhttp.Do(req.Context(), client, req)
+
+		if err != nil {
+			log.Warnf("Error %v", err)
+			return
+		}
+
+		defer resp.Body.Close()
+
+		copyHeader(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+
+		flushResponse(w)
+
+		copyBuffer(w, resp.Body)
+	}
+}
+
+func hijack(req *http.Request, w http.ResponseWriter) {
+	inConn, err := net.Dial("unix", targetSocket)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		log.Warnf("Error in connection %v", err)
+	}
+
+	if tcpConn, ok := inConn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	clientconn := httputil.NewClientConn(inConn, nil)
+
+	// Server hijacks the connection, error 'connection closed' expected
+	resp, err := clientconn.Do(req)
+	if err != httputil.ErrPersistEOF {
+		if err != nil {
+			log.Errorf("error upgrading: %v", err)
+		}
+		if resp.StatusCode != http.StatusSwitchingProtocols {
+			resp.Body.Close()
+			log.Errorf("unable to upgrade to %s, received %d", "tcp", resp.StatusCode)
+		}
+	}
+
+	log.Debugf("Response: %v", resp)
+	copyHeader(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+
+	flushResponse(w)
+
+	c, br := clientconn.Hijack()
+
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
+		return
+	}
+	outConn, _, err := hj.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	defer resp.Body.Close()
-	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	copyBuffer(w, resp.Body)
+	if(br.Buffered() > 0) {
+		log.Debugf("Found buffered bytes")
+		var bs = make([]byte, br.Buffered())
+		br.Read(bs)
+		outConn.Write(bs)
+	}
+
+	errClient := make(chan error, 1)
+	errBackend := make(chan error, 1)
+
+	streamFn := func(dst, src net.Conn, errc chan error, desc string) {
+		log.Debugf("%s Streaming connections", desc)
+		written, err := copyBuffer(dst, src)
+		log.Debugf("%s wrote %v, err: %v", desc, written, err)
+		errc<-err
+	}
+
+	go streamFn(outConn, c, errClient, "docker -> client")
+	go streamFn(c, outConn, errBackend, "client -> docker")
+
+	select {
+	case err = <-errClient:
+		if err != nil {
+			log.Error("hijack: Error when copying from docker to client")
+		} else {
+			log.Debugf("Closed connection by docker")
+		}
+	case err = <-errBackend:
+		if err != nil {
+			log.Debugf("hijack: Error when copying from docker to client", err)
+		} else {
+			log.Debug("Closed connection by docker")
+		}
+	}
+
+	c.Close()
+	outConn.Close()
+	clientconn.Close()
+	inConn.Close()
 }
 
 func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	var buf = make([]byte, 32*1024)
 	var written int64
 	for {
+
 		nr, rerr := src.Read(buf)
 		if rerr != nil && rerr != io.EOF && rerr != context.Canceled {
-			log.Warnf("read error during body copy: %v", rerr)
+			log.Debugf("read error during body copy: %v", rerr)
 		}
 		if nr > 0 {
 			nw, werr := dst.Write(buf[:nr])
@@ -168,6 +271,13 @@ func listenAndServe(sockPath string) error {
 	os.Chmod(sockPath, 0777)
 
 	return http.Serve(l, nil)
+}
+
+func flushResponse(w http.ResponseWriter) {
+	flusher, ok := w.(http.Flusher)
+	if ok {
+		flusher.Flush()
+	}
 }
 
 /*
