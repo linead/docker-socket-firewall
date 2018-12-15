@@ -6,6 +6,9 @@ import (
 	"context"
 	"flag"
 	"github.com/docker/go-connections/sockets"
+	"github.com/linead/docker-socket-firewall/pkg/opa"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context/ctxhttp"
 	"io"
 	"io/ioutil"
@@ -15,9 +18,6 @@ import (
 	"os"
 	"regexp"
 	"time"
-	"github.com/linead/docker-socket-firewall/pkg/opa"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 var opaHandler opa.DockerHandler
@@ -41,9 +41,9 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 	req.RequestURI = ""
 	req.Close = true
 
-	if ( req.Header.Get("Connection") == "Upgrade") {
-		if ( req.Header.Get("Upgrade") != "tcp" && req.Header.Get("Upgrade") != "h2c" ) {
-			http.Error(w, "Unsupported upgrade protocol: " + req.Header.Get("Protocol"), http.StatusInternalServerError)
+	if req.Header.Get("Connection") == "Upgrade" {
+		if req.Header.Get("Upgrade") != "tcp" && req.Header.Get("Upgrade") != "h2c" {
+			http.Error(w, "Unsupported upgrade protocol: "+req.Header.Get("Protocol"), http.StatusInternalServerError)
 			return
 		}
 		log.Debug("Connection upgrading")
@@ -112,7 +112,7 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 		return
 	}
 
-	if(br.Buffered() > 0) {
+	if br.Buffered() > 0 {
 		log.Debugf("Found buffered bytes")
 		var bs = make([]byte, br.Buffered())
 		br.Read(bs)
@@ -126,7 +126,7 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 		log.Debugf("%s Streaming connections", desc)
 		written, err := copyBuffer(dst, src)
 		log.Debugf("%s wrote %v, err: %v", desc, written, err)
-		errc<-err
+		errc <- err
 	}
 
 	go streamFn(outConn, c, errClient, "docker -> client")

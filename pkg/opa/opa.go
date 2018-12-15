@@ -17,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+//DockerHandler validates either a regular request or a build request (with supplied dockerfile)
 type DockerHandler interface {
 	ValidateRequest(r *http.Request) (bool, error)
 	ValidateDockerFile(r *http.Request, dockerFile string) (bool, error)
@@ -31,13 +32,6 @@ type DockerOpaHandler struct {
 const authAllowPath string = "data.docker.authz.allow"
 const buildAllowPath string = "data.docker.build.allow"
 
-//// NewDockerOpaHandler constructs the
-//func NewDockerOpaHandler(pPolicy string, dPolicy string) *DockerOpaHandler {
-//	return &DockerOpaHandler{
-//		ProxyPolicyFile:      pPolicy,
-//		DockerfilePolicyFile: dPolicy,
-//	}
-//}
 
 // ValidateRequest validates a standard docker request (not build)
 // verifies against the ProxyPolicyFile using the path data.docker.authz.allow
