@@ -42,8 +42,9 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 	req.Close = true
 
 	if ( req.Header.Get("Connection") == "Upgrade") {
-		if ( req.Header.Get("Upgrade") != "tcp") {
+		if ( req.Header.Get("Upgrade") != "tcp" && req.Header.Get("Upgrade") != "h2c" ) {
 			http.Error(w, "Unsupported upgrade protocol: " + req.Header.Get("Protocol"), http.StatusInternalServerError)
+			return
 		}
 		log.Debug("Connection upgrading")
 		hijack(req, w)
