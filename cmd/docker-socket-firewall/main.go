@@ -209,7 +209,11 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 	tr := tar.NewReader(b1)
 
-	dockerfileLoc := req.URL.Query()["dockerfile"]
+	dockerfileLoc := req.URL.Query().Get("dockerfile")
+
+	if dockerfileLoc == "" {
+		dockerfileLoc = "Dockerfile";
+	}
 
 	var valid = false
 
@@ -221,7 +225,7 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if hdr.Name == dockerfileLoc[0] {
+		if hdr.Name == dockerfileLoc {
 			df, _ := ioutil.ReadAll(tr)
 			valid, _ = opaHandler.ValidateDockerFile(req, string(df))
 		}
