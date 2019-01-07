@@ -2,14 +2,20 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
+	"compress/bzip2"
+	"compress/gzip"
 	"context"
 	"flag"
 	"github.com/docker/go-connections/sockets"
+	"github.com/h2non/filetype"
 	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
+	"github.com/xi2/xz"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context/ctxhttp"
+	"gopkg.in/h2non/filetype.v1/matchers"
 	"io"
 	"io/ioutil"
 	"net"
@@ -205,9 +211,24 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 		return false, err
 	}
 
-	b1, b2 := ioutil.NopCloser(&buf), ioutil.NopCloser(bytes.NewReader(buf.Bytes()))
+	b1, b2 := bufio.NewReader(&buf), ioutil.NopCloser(bytes.NewReader(buf.Bytes()))
 
-	tr := tar.NewReader(b1)
+	head, _ := b1.Peek(262)
+
+	var tr *tar.Reader
+
+	if(filetype.IsType(head, matchers.TypeGz)) {
+		gzip_reader, _ := gzip.NewReader(b1)
+		tr = tar.NewReader(gzip_reader)
+	} else if(filetype.IsType(head, matchers.TypeBz2)) {
+		bz2_reader := bzip2.NewReader(b1)
+		tr = tar.NewReader(bz2_reader)
+	} else if(filetype.IsType(head, matchers.TypeXz)) {
+		xz_reader, _ := xz.NewReader(b1, 0)
+		tr = tar.NewReader(xz_reader)
+	} else if(filetype.IsType(head, matchers.TypeTar)) {
+		tr = tar.NewReader(b1)
+	}
 
 	dockerfileLoc := req.URL.Query().Get("dockerfile")
 
