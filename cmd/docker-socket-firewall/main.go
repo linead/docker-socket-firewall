@@ -12,8 +12,8 @@ import (
 	"github.com/h2non/filetype"
 	"github.com/linead/docker-socket-firewall/pkg/opa"
 	"github.com/pkg/errors"
-	"github.com/xi2/xz"
 	log "github.com/sirupsen/logrus"
+	"github.com/xi2/xz"
 	"golang.org/x/net/context/ctxhttp"
 	"gopkg.in/h2non/filetype.v1/matchers"
 	"io"
@@ -65,10 +65,17 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 		defer resp.Body.Close()
 
 		copyHeader(w.Header(), resp.Header)
+
+		//If we're looking at a raw stream and we're not sending a value fo TE golang tries
+		//to chunk the response, which can break clients.
+		if resp.Header.Get("Content-Type") == "application/vnd.docker.raw-stream" {
+			if resp.Header.Get("Transfer-Encoding") == "" {
+				w.Header().Set("Transfer-Encoding", "identity")
+			}
+		}
 		w.WriteHeader(resp.StatusCode)
 
 		flushResponse(w)
-
 		copyBuffer(w, resp.Body)
 	}
 }
@@ -160,10 +167,9 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 }
 
 func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
-	var buf = make([]byte, 32*1024)
+	var buf = make([]byte, 100)
 	var written int64
 	for {
-
 		nr, rerr := src.Read(buf)
 		if rerr != nil && rerr != io.EOF && rerr != context.Canceled {
 			log.Debugf("read error during body copy: %v", rerr)
@@ -179,6 +185,7 @@ func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
 			if nr != nw {
 				return written, io.ErrShortWrite
 			}
+			flushResponse(dst);
 		}
 		if rerr != nil {
 			if rerr == io.EOF {
@@ -298,7 +305,7 @@ func listenAndServe(sockPath string) error {
 	return http.Serve(l, nil)
 }
 
-func flushResponse(w http.ResponseWriter) {
+func flushResponse(w io.Writer) {
 	flusher, ok := w.(http.Flusher)
 	if ok {
 		flusher.Flush()
