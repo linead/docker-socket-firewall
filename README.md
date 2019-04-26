@@ -103,6 +103,8 @@ allow {
 
 nodeImage {
   images[_] = "node"
+} {
+  true
 }
 
 ## Get all FROM lines ##

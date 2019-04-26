@@ -41,7 +41,10 @@ linux:
 	OUTPUT_DIR=$$(pwd)/_output/bin/linux/amd64 \
 	./hack/build.sh
 
-ci: build-ci-dirs mac linux
+tests:
+	go test -covermode=count ./...
+
+ci: build-ci-dirs tests mac linux
 
 build-ci-dirs:
 	@mkdir -p _output/bin/linux/amd64 _output/bin/darwin/amd64

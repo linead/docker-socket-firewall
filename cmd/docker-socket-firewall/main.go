@@ -154,7 +154,7 @@ func hijack(req *http.Request, w http.ResponseWriter) {
 		}
 	case err = <-errBackend:
 		if err != nil {
-			log.Debugf("hijack: Error when copying from docker to client", err)
+			log.Debugf("hijack: Error when copying from docker to client: %v", err)
 		} else {
 			log.Debug("Closed connection by docker")
 		}
