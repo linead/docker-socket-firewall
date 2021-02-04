@@ -1,11 +1,12 @@
 .DEFAULT_GOAL := ci
 BIN ?= docker-socket-firewall
 PKG := github.com/linead/docker-socket-firewall
+GIT_DIRTY := $(shell test -n "$(git status -z .)" || echo -dirty)
+GIT_INFO := $(shell git describe --tags --always)$(GIT_DIRTY)
+LDFLAGS = "-X main.gitInfo=${GIT_INFO}"
 
 local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
-
-SRC_DIRS := cmd pkg # directories which hold app source (not vendored)
 
 CLI_PLATFORMS := linux-amd64 darwin-amd64 
 
@@ -17,29 +18,20 @@ VERSION ?= master
 local: build-dirs
 	GOOS=$(GOOS) \
 	GOARCH=$(GOARCH) \
-	VERSION=$(VERSION) \
-	PKG=$(PKG) \
-	BIN=$(BIN) \
-	OUTPUT_DIR=$$(pwd)/_output/bin/$(GOOS)/$(GOARCH) \
-	./hack/build.sh
+	go build -ldflags $(LDFLAGS)
+	mv $(BIN) _output/bin/$(GOOS)/$(GOARCH)/
 
 mac:
 	GOOS=darwin \
 	GOARCH=amd64 \
-	VERSION=$(VERSION) \
-	PKG=$(PKG) \
-	BIN=$(BIN) \
-	OUTPUT_DIR=$$(pwd)/_output/bin/linux/amd64 \
-	./hack/build.sh
+	go build -ldflags $(LDFLAGS)
+	mv $(BIN) _output/bin/darwin/amd64/
 
 linux:
 	GOOS=linux \
 	GOARCH=amd64 \
-	VERSION=$(VERSION) \
-	PKG=$(PKG) \
-	BIN=$(BIN) \
-	OUTPUT_DIR=$$(pwd)/_output/bin/linux/amd64 \
-	./hack/build.sh
+	go build -ldflags $(LDFLAGS)
+	mv $(BIN) _output/bin/linux/amd64/
 
 tests:
 	go test -covermode=count ./...

@@ -17,7 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//DockerHandler validates either a regular request or a build request (with supplied dockerfile)
+// DockerHandler validates either a regular request or a build request (with supplied dockerfile)
 type DockerHandler interface {
 	ValidateRequest(r *http.Request) (bool, error)
 	ValidateDockerFile(r *http.Request, dockerFile string) (bool, error)
@@ -75,8 +75,11 @@ func processPolicy(ctx context.Context, policyFile string, policyPath string, in
 		return false, err
 	}
 
-	pretty, _ := json.MarshalIndent(input, "", "  ")
-	log.Debugf("Querying OPA policy %v. Input: %s", policyPath, pretty)
+	// pretty, _ := json.MarshalIndent(input, "", "  ")
+	log.WithFields(log.Fields{
+		"policy":  policyPath,
+		"request": input,
+	}).Trace("Querying OPA policy")
 	allowed, err := func() (bool, error) {
 
 		eval := rego.New(
@@ -87,28 +90,36 @@ func processPolicy(ctx context.Context, policyFile string, policyPath string, in
 
 		rs, err := eval.Eval(ctx)
 		if err != nil {
+			log.Trace(err)
 			return false, err
 		}
 
 		if len(rs) == 0 {
-			// Decision is undefined. Fallback to deny.
+			log.Trace("OPA undefined result - fallback to deny")
 			return false, nil
 		}
 
+		log.WithFields(log.Fields{
+			"policy":    policyPath,
+			"resultSet": rs,
+		}).Trace("OPA Decision")
+
 		allowed, ok := rs[0].Expressions[0].Value.(bool)
+
 		if !ok {
-			return false, fmt.Errorf("administrative policy decision invalid")
+			log.Trace("OPA administrative policy decision invalid")
+			return false, fmt.Errorf("OPA administrative policy decision invalid")
 		}
 
 		return allowed, nil
 
 	}()
 	if err != nil {
-		log.Debugf("Returning OPA policy decision: %v (error: %v)", allowed, err)
+		log.Tracef("Returning OPA policy decision: %v (error: %v)", allowed, err)
 		return allowed, err
 	}
 
-	log.Debugf("Returning OPA policy decision: %v", allowed)
+	log.Tracef("Returning OPA policy decision: %v", allowed)
 	return allowed, nil
 }
 

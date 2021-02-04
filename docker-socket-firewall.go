@@ -8,26 +8,30 @@ import (
 	"compress/gzip"
 	"context"
 	"flag"
-	"github.com/docker/go-connections/sockets"
-	"github.com/h2non/filetype"
-	"github.com/linead/docker-socket-firewall/pkg/opa"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
-	"github.com/xi2/xz"
-	"golang.org/x/net/context/ctxhttp"
-	"gopkg.in/h2non/filetype.v1/matchers"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
+
+	"github.com/linead/docker-socket-firewall/opa"
+
+	"github.com/docker/go-connections/sockets"
+	"github.com/h2non/filetype"
+	"github.com/h2non/filetype/matchers"
+	log "github.com/sirupsen/logrus"
+	"github.com/xi2/xz"
+	"golang.org/x/net/context/ctxhttp"
 )
 
 var opaHandler opa.DockerHandler
 var targetSocket string
+var gitInfo string
 
 /*
 	Reverse Proxy Logic
@@ -58,7 +62,7 @@ func serveReverseProxy(w http.ResponseWriter, req *http.Request) {
 		resp, err := ctxhttp.Do(req.Context(), client, req)
 
 		if err != nil {
-			log.Warnf("Error %v", err)
+			log.Error(err)
 			return
 		}
 
@@ -185,7 +189,7 @@ func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
 			if nr != nw {
 				return written, io.ErrShortWrite
 			}
-			flushResponse(dst);
+			flushResponse(dst)
 		}
 		if rerr != nil {
 			if rerr == io.EOF {
@@ -224,23 +228,23 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 	var tr *tar.Reader
 
-	if(filetype.IsType(head, matchers.TypeGz)) {
-		gzip_reader, _ := gzip.NewReader(b1)
-		tr = tar.NewReader(gzip_reader)
-	} else if(filetype.IsType(head, matchers.TypeBz2)) {
-		bz2_reader := bzip2.NewReader(b1)
-		tr = tar.NewReader(bz2_reader)
-	} else if(filetype.IsType(head, matchers.TypeXz)) {
-		xz_reader, _ := xz.NewReader(b1, 0)
-		tr = tar.NewReader(xz_reader)
-	} else if(filetype.IsType(head, matchers.TypeTar)) {
+	if filetype.IsType(head, matchers.TypeGz) {
+		gzipReader, _ := gzip.NewReader(b1)
+		tr = tar.NewReader(gzipReader)
+	} else if filetype.IsType(head, matchers.TypeBz2) {
+		bz2Reader := bzip2.NewReader(b1)
+		tr = tar.NewReader(bz2Reader)
+	} else if filetype.IsType(head, matchers.TypeXz) {
+		xzReader, _ := xz.NewReader(b1, 0)
+		tr = tar.NewReader(xzReader)
+	} else if filetype.IsType(head, matchers.TypeTar) {
 		tr = tar.NewReader(b1)
 	}
 
 	dockerfileLoc := req.URL.Query().Get("dockerfile")
 
 	if dockerfileLoc == "" {
-		dockerfileLoc = "Dockerfile";
+		dockerfileLoc = "Dockerfile"
 	}
 
 	var valid = false
@@ -269,7 +273,6 @@ func verifyBuildInstruction(req *http.Request) (bool, error) {
 
 // Given a request send it to the appropriate url if it validates
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
-	log.Debugf("Received Request: %s", req.URL.Path)
 	matched, _ := regexp.MatchString("^(/v[\\d\\.]+)?/build$", req.URL.Path)
 
 	var err error
@@ -287,21 +290,34 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	}
 
 	if allowed {
+		log.WithFields(log.Fields{
+			"request":     req.URL.Path,
+			"disposition": "PERMIT",
+		}).Debug("docker-socket-firewall")
+
 		serveReverseProxy(res, req)
 	} else {
-		http.Error(res, "Authorization denied", http.StatusForbidden)
+		http.Error(res, "Authorization denied", http.StatusUnavailableForLegalReasons)
+		log.WithFields(log.Fields{
+			"request":     req.URL.Path,
+			"disposition": "DENIED",
+		}).Debug("docker-socket-firewall")
 	}
 }
 
 func listenAndServe(sockPath string) error {
+	log.Tracef("initialising named pipe: %s", sockPath)
 	http.HandleFunc("/", handleRequestAndRedirect)
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
-		return errors.Wrap(err, "failed to listen")
+		return err
+	}
+	err = os.Chmod(sockPath, 0777)
+	if err != nil {
+		return err
 	}
 
-	os.Chmod(sockPath, 0777)
-
+	log.Tracef("entering http listener on socket at: %s", sockPath)
 	return http.Serve(l, nil)
 }
 
@@ -312,6 +328,34 @@ func flushResponse(w io.Writer) {
 	}
 }
 
+func setupLogFile(logPath string) {
+	oPath := logPath + ".0"
+
+	logFile := filepath.Clean(logPath)
+	oFile := filepath.Clean(oPath)
+
+	if fInfo, err := os.Stat(logFile); err == nil {
+		if fInfo.Size() > 10*1024*1024 {
+			//rollover the logfile before opening
+			log.Infof("logfile %s > 10Mib, rotating to %s", logFile, oFile)
+			if err := os.Rename(logFile, oFile); err != nil {
+				log.Error(err)
+			}
+		}
+	}
+
+	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err":     err,
+			"logfile": logFile,
+		}).Fatal("error opening logdest")
+	}
+
+	log.SetFormatter(&log.JSONFormatter{})
+	log.SetOutput(f)
+}
+
 /*
 	Entry
 */
@@ -320,35 +364,91 @@ func main() {
 
 	var hostSocket string
 	var policyDir string
+	var logFile string
 
-	flag.StringVar(&targetSocket, "target", "/var/run/docker.sock", "The docker socket to connect to")
-	flag.StringVar(&hostSocket, "host", "/var/run/protected-docker.sock", "The docker socket to listen on")
-	flag.StringVar(&policyDir, "policyDir", "/etc/docker", "The directory containing the OPA policies")
+	flag.StringVar(&targetSocket, "target", "docker.sock", "The docker socket to connect to")
+	flag.StringVar(&hostSocket, "host", "docker-proxy.sock", "The docker socket to listen on")
+	flag.StringVar(&policyDir, "policyDir", "testpolicy", "The directory containing the OPA policies")
+	flag.StringVar(&logFile, "log", "STDOUT", "path to divert stdout to")
 	printUsage := flag.Bool("usage", false, "Print usage information")
-	verbose := flag.Bool("verbose", false, "Print debug logging")
+	verbose := flag.Bool("verbose", false, "Print debug level logging")
+	trace := flag.Bool("trace", false, "Print trace level logging")
+	version := flag.Bool("version", false, "only show version")
 
 	flag.Parse()
+
+	//show version and exit cleanly
+	if *version {
+		fmt.Printf("%s\n", gitInfo)
+		os.Exit(0)
+	}
 
 	if *printUsage {
 		flag.Usage()
 		os.Exit(0)
 	}
 
+	if logFile != "STDOUT" {
+		log.WithFields(log.Fields{
+			"logfile": logFile,
+		}).Info("docker-socket-firewall started")
+
+		setupLogFile(logFile)
+	}
+
+	// have a way for admin to turn on tracing by touching this file
+	if _, err := os.Stat(filepath.Clean("/var/run/docker-socket-firewall.debug")); err == nil {
+		log.SetLevel(log.DebugLevel)
+	}
+	if _, err := os.Stat(filepath.Clean("/var/run/docker-socket-firewall.trace")); err == nil {
+		log.SetLevel(log.TraceLevel)
+	}
 	if *verbose {
 		log.SetLevel(log.DebugLevel)
 	}
+	if *trace {
+		log.SetLevel(log.TraceLevel)
+	}
 
-	// clean up old sockets
+	// clean up old socket
 	os.Remove(hostSocket)
 
-	opaHandler = &opa.DockerOpaHandler{
-		policyDir + "/authz.rego",
-		policyDir + "/build.rego"}
+	proxyPolicyFile := filepath.Join(policyDir, "authz.rego")
+	buildPolicyFile := filepath.Join(policyDir, "build.rego")
 
-	log.Infof("Docker Firewall: %s -> %s, Policy Dir: %s", targetSocket, hostSocket, policyDir)
+	opaHandler = &opa.DockerOpaHandler{
+		ProxyPolicyFile:      proxyPolicyFile,
+		DockerfilePolicyFile: buildPolicyFile}
+
+	log.WithFields(log.Fields{
+		"revision":        gitInfo,
+		"targetSocket":    targetSocket,
+		"hostSocket":      hostSocket,
+		"proxyPolicyFile": proxyPolicyFile,
+		"buildPolicyFile": buildPolicyFile,
+	}).Info("docker-socket-firewall init")
+
+	// validate target socket
+	if tInfo, err := os.Lstat(targetSocket); err == nil {
+		tPipe := targetSocket
+		if tInfo.Mode()&os.ModeSymlink != 0 {
+			if t, err := os.Readlink(targetSocket); err == nil {
+				tPipe = t
+				log.Infof("%s is symlink to %s", targetSocket, tPipe)
+			} else {
+				log.Infof("%s is not symlink", targetSocket)
+			}
+		}
+	} else {
+		log.Warn(err)
+	}
 
 	// start server
 	if err := listenAndServe(hostSocket); err != nil {
-		log.Fatal("Unable to start firewalled socket")
+		log.WithFields(log.Fields{
+			"err":        err,
+			"hostSocket": hostSocket,
+		}).Fatal("error opening host named pipe")
+
 	}
 }
