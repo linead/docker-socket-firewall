@@ -1,9 +1,23 @@
 .DEFAULT_GOAL := ci
 BIN ?= docker-socket-firewall
 PKG := github.com/linead/docker-socket-firewall
-GIT_DIRTY := $(shell test -n "$(git status -z .)" || echo -dirty)
-GIT_INFO := $(shell git describe --tags --always)$(GIT_DIRTY)
-LDFLAGS = "-X main.gitInfo=${GIT_INFO}"
+
+TAG_COMMIT := $(shell git rev-list --abbrev-commit --tags --max-count=1)
+TAG := $(shell git describe --abbrev=0 --tags ${TAG_COMMIT} 2>/dev/null || true)
+COMMIT := $(shell git rev-parse --short HEAD)
+DATE := $(shell git log -1 --format=%cd --date=format:"%Y%m%d")
+VERSION := $(TAG:v%=%)
+ifneq ($(COMMIT), $(TAG_COMMIT))
+	VERSION := $(VERSION)-next-$(COMMIT)-$(DATE)
+endif
+ifeq ($(VERSION,), "" )
+	VERSION := $(COMMIT)-$(DATA)
+endif
+ifneq ($(shell git status --porcelain),)
+	VERSION := $(VERSION)-dirty
+endif
+
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
 local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
@@ -18,19 +32,19 @@ VERSION ?= master
 local: build-dirs
 	GOOS=$(GOOS) \
 	GOARCH=$(GOARCH) \
-	go build -ldflags $(LDFLAGS)
+	go build $(LDFLAGS)
 	mv $(BIN) _output/bin/$(GOOS)/$(GOARCH)/
 
 mac:
 	GOOS=darwin \
 	GOARCH=amd64 \
-	go build -ldflags $(LDFLAGS)
+	go build $(LDFLAGS)
 	mv $(BIN) _output/bin/darwin/amd64/
 
 linux:
 	GOOS=linux \
 	GOARCH=amd64 \
-	go build -ldflags $(LDFLAGS)
+	go build $(LDFLAGS)
 	mv $(BIN) _output/bin/linux/amd64/
 
 tests:
